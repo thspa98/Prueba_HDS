@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Generador de QR - Control de Stock</title>
+    <title>Generador de QR - Control de Stock Unificado</title>
     <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
     <style>
-        :root { --primary: #2563eb; --success: #16a34a; --dark: #1e293b; }
+        :root { --primary: #2563eb; --success: #16a34a; --danger: #dc2626; --dark: #1e293b; }
         body { font-family: system-ui, sans-serif; background-color: #f1f5f9; color: var(--dark); margin: 0; padding: 20px; }
-        .container { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 1.2fr 1.8fr; gap: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1.1fr 1.9fr; gap: 20px; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
         h3 { margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
         .grid-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -24,6 +24,10 @@
         th, td { text-align: left; padding: 10px; border-bottom: 1px solid #e2e8f0; }
         th { background-color: #f8fafc; }
         .badge { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+        
+        /* Estilo para el botón de borrar tabla */
+        .btn-delete-row { background-color: var(--danger); padding: 5px 10px; font-size: 12px; width: auto; display: inline-block; }
+        
         @media print {
             .no-print { display: none !important; }
             body { background: white; margin: 0; }
@@ -36,7 +40,7 @@
 
     <div class="container no-print">
         <div class="card">
-            <h3>1. Registrar Elemento Nuevo</h3>
+            <h3>1. Registrar / Actualizar Elemento</h3>
             <div class="form-group">
                 <label>Elemento (Nombre)</label>
                 <input type="text" id="input-elemento" placeholder="Ej: Tornillo, Casco, Manguera">
@@ -53,8 +57,8 @@
             </div>
             <div class="grid-inputs">
                 <div class="form-group">
-                    <label>Cantidad Inicial</label>
-                    <input type="number" id="input-cantidad" value="1">
+                    <label>Cantidad</label>
+                    <input type="number" id="input-cantidad" value="1" min="1">
                 </div>
                 <div class="form-group">
                     <label>Tipo de Unidad</label>
@@ -64,14 +68,22 @@
                     </select>
                 </div>
             </div>
-            <button onclick="crearElementoYQR()">Generar Elemento y QR</button>
+            <button onclick="crearElementoYQR()">Procesar Elemento y QR</button>
         </div>
 
         <div class="card">
             <h3>2. Base de Datos Local (Simulada)</h3>
             <table>
                 <thead>
-                    <tr><th>ID</th><th>Elemento</th><th>Largo</th><th>Diámetro</th><th>Cant.</th><th>Código QR Link</th></tr>
+                    <tr>
+                        <th>ID</th>
+                        <th>Elemento</th>
+                        <th>Largo</th>
+                        <th>Diámetro</th>
+                        <th>Cant.</th>
+                        <th>Vínculo QR</th>
+                        <th>Acción</th>
+                    </tr>
                 </thead>
                 <tbody id="tabla-cuerpo"></tbody>
             </table>
@@ -89,7 +101,7 @@
     </div>
 
     <script>
-        // Cargar elementos previos al iniciar
+        // Renderizar la tabla de existencias al iniciar la página
         window.onload = actualizarTabla;
 
         async function crearElementoYQR() {
@@ -99,32 +111,68 @@
             const cantidad = parseInt(document.getElementById('input-cantidad').value);
             const unidad = document.getElementById('select-unidad').value;
 
-            if(!elemento || isNaN(cantidad)) return alert("Completa los datos obligatorios");
+            if(!elemento || isNaN(cantidad) || cantidad <= 0) {
+                return alert("Por favor ingresa un nombre válido y una cantidad mayor a cero.");
+            }
 
-            // Obtener base de datos local de localStorage
             let DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
-            const nuevoId = Object.keys(DB).length + 1;
-            const itemCode = `PROD-${nuevoId}`;
+            let itemCode = null;
 
-            // MAGIA: Detecta automáticamente si estás en localhost o en tu URL de GitHub Pages
+            // REQUISITO 2: Verificar si el elemento ya existe (mismo nombre, largo y diámetro)
+            for (let key in DB) {
+                if (DB[key].elemento.toLowerCase() === elemento.toLowerCase() && 
+                    (DB[key].largo || "") === largo && 
+                    (DB[key].diametro || "") === diameter) {
+                    itemCode = key;
+                    break;
+                }
+            }
+
+            if (itemCode) {
+                // Si ya existe, unificamos sumando el valor ingresado al stock actual
+                DB[itemCode].cantidad += cantidad;
+                alert(`¡Elemento existente detectado (${itemCode})! Se incrementó su stock. Nuevo total: ${DB[itemCode].cantidad}`);
+            } else {
+                // Si es un producto nuevo, calculamos el siguiente ID numérico disponible (evita colisiones si hubo borrados)
+                let maxNumericId = 0;
+                Object.keys(DB).forEach(k => {
+                    const num = parseInt(k.replace('PROD-', ''));
+                    if(!isNaN(num) && num > maxNumericId) maxNumericId = num;
+                });
+                const nuevoId = maxNumericId + 1;
+                itemCode = `PROD-${nuevoId}`;
+
+                // Registrar el nuevo objeto de forma independiente
+                DB[itemCode] = { elemento, largo, diametro: diameter, cantidad, unidad, ubicacion: "Estante General" };
+            }
+
+            // Persistir los cambios actualizados en la memoria
+            localStorage.setItem('DB_PLANTA', JSON.stringify(DB));
+
+            // Mapear URL para el QR dinámico (Local o GitHub Pages)
             const urlBase = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
             const urlFinalQR = `${urlBase}producto.html?id=${itemCode}`;
 
-            // Guardar en la DB simulada
-            DB[itemCode] = { elemento, largo, diametro: diameter, cantidad, unidad, ubicacion: "Estante General" };
-            localStorage.setItem('DB_PLANTA', JSON.stringify(DB));
-
-            // Renderizar QR
+            // Actualizar y pintar el canvas QR
             await QRCode.toCanvas(document.getElementById('qr-canvas'), urlFinalQR, { width: 150, margin: 1 });
 
-            // Modificar Etiqueta
-            document.getElementById('print-texto-elemento').innerText = elemento;
-            document.getElementById('print-texto-cantidad').innerText = `Cant: ${cantidad} (${unidad})`;
+            // Inyectar datos en el formato de la etiqueta física
+            document.getElementById('print-texto-elemento').innerText = DB[itemCode].elemento;
+            document.getElementById('print-texto-cantidad').innerText = `Cant: ${DB[itemCode].cantidad} (${DB[itemCode].unidad})`;
             document.getElementById('print-texto-codigo').innerText = urlFinalQR;
-            document.getElementById('print-texto-largo').style.display = largo ? (document.getElementById('print-texto-largo').innerText = `Largo: ${largo}`, 'block') : 'none';
-            document.getElementById('print-texto-diametro').style.display = diameter ? (document.getElementById('print-texto-diametro').innerText = `Diámetro: ${diameter}`, 'block') : 'none';
+            
+            // Ocultar condicionalmente las dimensiones si el ítem no las requiere
+            document.getElementById('print-texto-largo').style.display = DB[itemCode].largo ? (document.getElementById('print-texto-largo').innerText = `Largo: ${DB[itemCode].largo}`, 'block') : 'none';
+            document.getElementById('print-texto-diametro').style.display = DB[itemCode].diametro ? (document.getElementById('print-texto-diametro').innerText = `Diámetro: ${DB[itemCode].diametro}`, 'block') : 'none';
             
             document.getElementById('contenedor-etiqueta').style.display = 'block';
+            
+            // Limpiar el formulario para agilizar el proceso
+            document.getElementById('input-elemento').value = '';
+            document.getElementById('input-largo').value = '';
+            document.getElementById('input-diametro').value = '';
+            document.getElementById('input-cantidad').value = '1';
+
             actualizarTabla();
         }
 
@@ -132,9 +180,31 @@
             const DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
             const cuerpo = document.getElementById('tabla-cuerpo');
             cuerpo.innerHTML = "";
+            
             Object.keys(DB).forEach(id => {
-                cuerpo.innerHTML += `<tr><td>${id}</td><td><strong>${DB[id].elemento}</strong></td><td>${DB[id].largo||'-'}</td><td>${DB[id].diametro||'-'}</td><td>${DB[id].cantidad}</td><td style="font-size:10px; color:green;">...?id=${id}</td></tr>`;
+                cuerpo.innerHTML += `<tr>
+                    <td>${id}</td>
+                    <td><strong>${DB[id].elemento}</strong></td>
+                    <td>${DB[id].largo || '-'}</td>
+                    <td>${DB[id].diametro || '-'}</td>
+                    <td>${DB[id].cantidad}</td>
+                    <td style="font-size:10px; color:green;">...?id=${id}</td>
+                    <td><button class="btn-delete-row no-print" onclick="eliminarElemento('${id}')">❌ Borrar</button></td>
+                </tr>`;
             });
+        }
+
+        // REQUISITO 1: Función para remover elementos de la base de datos
+        function eliminarElemento(id) {
+            if(confirm(`¿Estás seguro de que deseas eliminar permanentemente el elemento ${id} de la lista?`)) {
+                let DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
+                delete DB[id];
+                localStorage.setItem('DB_PLANTA', JSON.stringify(DB));
+                
+                // Ocultar etiqueta en caso de que corresponda al elemento eliminado
+                document.getElementById('contenedor-etiqueta').style.display = 'none';
+                actualizarTabla();
+            }
         }
     </script>
 </body>
