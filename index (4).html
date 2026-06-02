@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generador de QR - Control de Stock</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+    <style>
+        :root { --primary: #2563eb; --success: #16a34a; --dark: #1e293b; }
+        body { font-family: system-ui, sans-serif; background-color: #f1f5f9; color: var(--dark); margin: 0; padding: 20px; }
+        .container { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: 1.2fr 1.8fr; gap: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        h3 { margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+        .grid-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; font-size: 14px; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: var(--primary); color: white; border: none; padding: 12px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%; }
+        #contenedor-etiqueta { background: white; border: 2px dashed #94a3b8; padding: 20px; width: 260px; margin: 20px auto 0 auto; text-align: center; }
+        #qr-canvas { margin-bottom: 10px; }
+        .etiqueta-titulo { font-size: 18px; font-weight: bold; margin: 5px 0; text-transform: uppercase; }
+        .etiqueta-detalles { font-size: 14px; margin: 4px 0; color: #334155; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #e2e8f0; }
+        th { background-color: #f8fafc; }
+        .badge { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white; margin: 0; }
+            #contenedor-etiqueta { display: block !important; position: absolute; left: 0; top: 0; border: none !important; width: 100% !important; }
+            .btn-print { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container no-print">
+        <div class="card">
+            <h3>1. Registrar Elemento Nuevo</h3>
+            <div class="form-group">
+                <label>Elemento (Nombre)</label>
+                <input type="text" id="input-elemento" placeholder="Ej: Tornillo, Casco, Manguera">
+            </div>
+            <div class="grid-inputs">
+                <div class="form-group">
+                    <label>Largo (Opcional)</label>
+                    <input type="text" id="input-largo" placeholder="Ej: 50mm">
+                </div>
+                <div class="form-group">
+                    <label>Diámetro (Opcional)</label>
+                    <input type="text" id="input-diametro" placeholder="Ej: M6">
+                </div>
+            </div>
+            <div class="grid-inputs">
+                <div class="form-group">
+                    <label>Cantidad Inicial</label>
+                    <input type="number" id="input-cantidad" value="1">
+                </div>
+                <div class="form-group">
+                    <label>Tipo de Unidad</label>
+                    <select id="select-unidad">
+                        <option value="Unidades">Unidades sueltas</option>
+                        <option value="Cajas">Cajas Cerradas</option>
+                    </select>
+                </div>
+            </div>
+            <button onclick="crearElementoYQR()">Generar Elemento y QR</button>
+        </div>
+
+        <div class="card">
+            <h3>2. Base de Datos Local (Simulada)</h3>
+            <table>
+                <thead>
+                    <tr><th>ID</th><th>Elemento</th><th>Largo</th><th>Diámetro</th><th>Cant.</th><th>Código QR Link</th></tr>
+                </thead>
+                <tbody id="tabla-cuerpo"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="contenedor-etiqueta" style="display: none;">
+        <canvas id="qr-canvas"></canvas>
+        <div id="print-texto-elemento" class="etiqueta-titulo"></div>
+        <div id="print-texto-largo" class="etiqueta-detalles"></div>
+        <div id="print-texto-diametro" class="etiqueta-detalles"></div>
+        <div id="print-texto-cantidad" class="etiqueta-detalles" style="font-weight: bold;"></div>
+        <div id="print-texto-codigo" style="font-family: monospace; font-size: 10px; color: #64748b; word-break: break-all;"></div>
+        <button class="btn-print no-print" style="background:#475569; margin-top:10px;" onclick="window.print()">🖨️ Imprimir Etiqueta</button>
+    </div>
+
+    <script>
+        // Cargar elementos previos al iniciar
+        window.onload = actualizarTabla;
+
+        async function crearElementoYQR() {
+            const elemento = document.getElementById('input-elemento').value.trim();
+            const largo = document.getElementById('input-largo').value.trim();
+            const diameter = document.getElementById('input-diametro').value.trim();
+            const cantidad = parseInt(document.getElementById('input-cantidad').value);
+            const unidad = document.getElementById('select-unidad').value;
+
+            if(!elemento || isNaN(cantidad)) return alert("Completa los datos obligatorios");
+
+            // Obtener base de datos local de localStorage
+            let DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
+            const nuevoId = Object.keys(DB).length + 1;
+            const itemCode = `PROD-${nuevoId}`;
+
+            // MAGIA: Detecta automáticamente si estás en localhost o en tu URL de GitHub Pages
+            const urlBase = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
+            const urlFinalQR = `${urlBase}producto.html?id=${itemCode}`;
+
+            // Guardar en la DB simulada
+            DB[itemCode] = { elemento, largo, diametro: diameter, cantidad, unidad, ubicacion: "Estante General" };
+            localStorage.setItem('DB_PLANTA', JSON.stringify(DB));
+
+            // Renderizar QR
+            await QRCode.toCanvas(document.getElementById('qr-canvas'), urlFinalQR, { width: 150, margin: 1 });
+
+            // Modificar Etiqueta
+            document.getElementById('print-texto-elemento').innerText = elemento;
+            document.getElementById('print-texto-cantidad').innerText = `Cant: ${cantidad} (${unidad})`;
+            document.getElementById('print-texto-codigo').innerText = urlFinalQR;
+            document.getElementById('print-texto-largo').style.display = largo ? (document.getElementById('print-texto-largo').innerText = `Largo: ${largo}`, 'block') : 'none';
+            document.getElementById('print-texto-diametro').style.display = diameter ? (document.getElementById('print-texto-diametro').innerText = `Diámetro: ${diameter}`, 'block') : 'none';
+            
+            document.getElementById('contenedor-etiqueta').style.display = 'block';
+            actualizarTabla();
+        }
+
+        function actualizarTabla() {
+            const DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
+            const cuerpo = document.getElementById('tabla-cuerpo');
+            cuerpo.innerHTML = "";
+            Object.keys(DB).forEach(id => {
+                cuerpo.innerHTML += `<tr><td>${id}</td><td><strong>${DB[id].elemento}</strong></td><td>${DB[id].largo||'-'}</td><td>${DB[id].diametro||'-'}</td><td>${DB[id].cantidad}</td><td style="font-size:10px; color:green;">...?id=${id}</td></tr>`;
+            });
+        }
+    </script>
+</body>
+</html>
