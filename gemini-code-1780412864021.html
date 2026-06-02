@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generador QR - Inventario Unificado</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+    <style>
+        :root { --primary: #2563eb; --success: #16a34a; --danger: #dc2626; --dark: #1e293b; --light: #f8fafc; }
+        body { font-family: system-ui, sans-serif; background-color: #f1f5f9; color: var(--dark); margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 1.1fr 1.9fr; gap: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
+        h3 { margin-top: 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+        .grid-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; font-size: 14px; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: var(--primary); color: white; border: none; padding: 12px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.2s; }
+        button:hover { opacity: 0.9; }
+        
+        /* Panel de Extracción */
+        .panel-extraccion { background: var(--light); border: 1px solid #cbd5e1; padding: 15px; border-radius: 6px; margin-top: 15px; }
+        .panel-extraccion h4 { margin: 0 0 10px 0; color: var(--danger); text-transform: uppercase; font-size: 13px; }
+        .btn-toggle-extraer { background-color: #475569; margin-top: 15px; }
+        .btn-confirm-extraer { background-color: var(--danger); margin-top: 10px; }
+
+        /* Etiqueta / Tabla */
+        #contenedor-etiqueta { background: white; border: 2px dashed #94a3b8; padding: 20px; width: 260px; margin: 20px auto 0 auto; text-align: center; }
+        #qr-canvas { margin-bottom: 10px; }
+        .etiqueta-titulo { font-size: 18px; font-weight: bold; margin: 5px 0; text-transform: uppercase; }
+        .etiqueta-detalles { font-size: 14px; margin: 4px 0; color: #334155; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #e2e8f0; }
+        th { background-color: #f8fafc; }
+        .btn-delete-row { background-color: var(--danger); padding: 5px 10px; font-size: 12px; width: auto; }
+        .stock-zero { color: var(--danger); font-weight: bold; }
+        
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white; margin: 0; }
+            #contenedor-etiqueta { display: block !important; position: absolute; left: 0; top: 0; border: none !important; width: 100% !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container no-print">
+        <div class="card">
+            <h3>1. Registrar / Actualizar Stock</h3>
+            <div class="form-group">
+                <label>Elemento (Nombre)</label>
+                <input type="text" id="input-elemento" placeholder="Ej: Tornillo, Casco, Manguera">
+            </div>
+            
+            <div class="grid-inputs">
+                <div class="form-group">
+                    <label>Largo (Opcional)</label>
+                    <input type="text" id="input-largo" placeholder="Ej: 50mm">
+                </div>
+                <div class="form-group">
+                    <label>Diámetro (Opcional)</label>
+                    <input type="text" id="input-diametro" placeholder="Ej: M6">
+                </div>
+            </div>
+
+            <div class="grid-inputs">
+                <div class="form-group">
+                    <label>Cantidad (Cajas o Unidades)</label>
+                    <input type="number" id="input-cantidad" value="1" min="1">
+                </div>
+                <div class="form-group">
+                    <label>Tipo de Ingreso</label>
+                    <select id="select-unidad" onchange="gestionarUIUnidades()">
+                        <option value="Unidades">Unidades Sueltas</option>
+                        <option value="Cajas">Cajas Cerradas</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group" id="contenedor-unidades-caja" style="display: none; background: #e0f2fe; padding: 10px; border-radius: 4px;">
+                <label style="color: #0369a1;">📦 ¿Cuántas unidades trae cada caja?</label>
+                <input type="number" id="input-unidades-caja" value="10" min="1">
+            </div>
+
+            <button onclick="procesarIngreso()">➕ Procesar Elemento y QR</button>
+
+            <button class="btn-toggle-extraer" onclick="togglePanelExtraccion()">➖ Desplegar Extracción Manual</button>
+            
+            <div id="panel-extraccion" class="panel-extraccion" style="display: none;">
+                <h4>Extraer stock de inventario</h4>
+                <div class="form-group">
+                    <label>Seleccionar Elemento</label>
+                    <select id="select-extraer-item"></select>
+                </div>
+                <div class="form-group">
+                    <label>Cantidad a Extraer (Unidades)</label>
+                    <input type="number" id="input-extraer-cantidad" min="1" placeholder="Ej: 5">
+                </div>
+                <button class="btn-confirm-extraer" onclick="confirmarExtraccion()">Confirmar Extracción</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>2. Base de Datos Local</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Elemento</th>
+                        <th>Largo</th>
+                        <th>Diámetro</th>
+                        <th>Stock Disp.</th>
+                        <th>Vínculo QR</th>
+                        <th>Acción</th>
+                    </tr>
+                </thead>
+                <tbody id="tabla-cuerpo"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="contenedor-etiqueta" style="display: none;">
+        <canvas id="qr-canvas"></canvas>
+        <div id="print-texto-elemento" class="etiqueta-titulo"></div>
+        <div id="print-texto-largo" class="etiqueta-detalles"></div>
+        <div id="print-texto-diametro" class="etiqueta-detalles"></div>
+        <div id="print-texto-cantidad" class="etiqueta-detalles" style="font-weight: bold;"></div>
+        <div id="print-texto-codigo" style="font-family: monospace; font-size: 10px; color: #64748b; word-break: break-all;"></div>
+        <button class="btn-print no-print" style="background:#475569; margin-top:10px;" onclick="window.print()">🖨️ Imprimir Etiqueta</button>
+    </div>
+
+    <script>
+        // Iniciar
+        window.onload = actualizarTabla;
+
+        // Mostrar/Ocultar input de unidades por caja
+        function gestionarUIUnidades() {
+            const tipo = document.getElementById('select-unidad').value;
+            const contenedorCaja = document.getElementById('contenedor-unidades-caja');
+            contenedorCaja.style.display = (tipo === 'Cajas') ? 'block' : 'none';
+        }
+
+        async function procesarIngreso() {
+            const elemento = document.getElementById('input-elemento').value.trim();
+            const largo = document.getElementById('input-largo').value.trim();
+            const diametro = document.getElementById('input-diametro').value.trim();
+            const cantidadInput = parseInt(document.getElementById('input-cantidad').value);
+            const tipoIngreso = document.getElementById('select-unidad').value;
+
+            if(!elemento || isNaN(cantidadInput) || cantidadInput <= 0) {
+                return alert("Ingresa un nombre y una cantidad válida.");
+            }
+
+            // Lógica de cálculo unificado (Todo se convierte a unidades)
+            let unidadesFinalesAAgregar = cantidadInput;
+            if (tipoIngreso === 'Cajas') {
+                const unidadesPorCaja = parseInt(document.getElementById('input-unidades-caja').value);
+                if(isNaN(unidadesPorCaja) || unidadesPorCaja <= 0) return alert("Ingresa cuántas unidades tiene la caja.");
+                unidadesFinalesAAgregar = cantidadInput * unidadesPorCaja;
+            }
+
+            let DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
+            let itemCode = null;
+
+            // Upsert: Buscar si ya existe
+            for (let key in DB) {
+                if (DB[key].elemento.toLowerCase() === elemento.toLowerCase() && 
+                    (DB[key].largo || "") === largo && 
+                    (DB[key].diametro || "") === diametro) {
+                    itemCode = key;
+                    break;
+                }
+            }
+
+            if (itemCode) {
+                DB[itemCode].cantidad += unidadesFinalesAAgregar;
+                alert(`¡Se sumaron ${unidadesFinalesAAgregar} unidades al elemento ${itemCode}! Nuevo total: ${DB[itemCode].cantidad}`);
+            } else {
+                let maxNumericId = 0;
+                Object.keys(DB).forEach(k => {
+                    const num = parseInt(k.replace('PROD-', ''));
+                    if(!isNaN(num) && num > maxNumericId) maxNumericId = num;
+                });
+                itemCode = `PROD-${maxNumericId + 1}`;
+                
+                // Siempre guardamos la unidad base como "Unidades" para evitar confusión de reportes
+                DB[itemCode] = { elemento, largo, diametro, cantidad: unidadesFinalesAAgregar, unidad: "Unidades" };
+            }
+
+            localStorage.setItem('DB_PLANTA', JSON.stringify(DB));
+
+            // Actualizar QR
+            const urlBase = window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
+            const urlFinalQR = `${urlBase}producto.html?id=${itemCode}`;
+            await QRCode.toCanvas(document.getElementById('qr-canvas'), urlFinalQR, { width: 150, margin: 1 });
+
+            // Mostrar en Etiqueta
+            document.getElementById('print-texto-elemento').innerText = DB[itemCode].elemento;
+            document.getElementById('print-texto-cantidad').innerText = `Total Disp: ${DB[itemCode].cantidad} (Unidades)`;
+            document.getElementById('print-texto-codigo').innerText = urlFinalQR;
+            
+            document.getElementById('print-texto-largo').style.display = DB[itemCode].largo ? (document.getElementById('print-texto-largo').innerText = `Largo: ${DB[itemCode].largo}`, 'block') : 'none';
+            document.getElementById('print-texto-diametro').style.display = DB[itemCode].diametro ? (document.getElementById('print-texto-diametro').innerText = `Diámetro: ${DB[itemCode].diametro}`, 'block') : 'none';
+            
+            document.getElementById('contenedor-etiqueta').style.display = 'block';
+            
+            // Limpiar formulario principal
+            document.getElementById('input-elemento').value = '';
+            document.getElementById('input-cantidad').value = '1';
+
+            actualizarTabla();
+            actualizarSelectExtraccion();
+        }
+
+        // ==========================================
+        // LÓGICA DE EXTRACCIÓN Y BORRADO
+        // ==========================================
+        function togglePanelExtraccion() {
+            const panel = document.getElementById('panel-extraccion');
+            if (panel.style.display === 'none') {
+                panel.style.display = 'block';
+                actualizarSelectExtraccion();
+            } else {
+                panel.style.display = 'none';
+            }
+        }
+
+        function actualizarSelectExtraccion() {
+            const DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
+            const select = document.getElementById('select-extraer-item');
+            select.innerHTML = '<option value="">-- Selecciona un elemento --</option>';
+            
+            Object.keys(DB).forEach(id => {
+                // Solo mostrar en el select si hay stock mayor a 0
+                if (DB[id].cantidad > 0) {
+                    const detalles = [DB[id].largo, DB[id].diametro].filter(Boolean).join(" - ");
+                    const textoDetalle = detalles ? ` (${detalles})` : '';
+                    select.innerHTML += `<option value="${id}">${DB[id].elemento}${textoDetalle} | Disp: ${DB[id].cantidad}</option>`;
+                }
+            });
+        }
+
+        function confirmarExtraccion() {
+            const id = document.getElementById('select-extraer-item').value;
+            const qty = parseInt(document.getElementById('input-extraer-cantidad').value);
+
+            if (!id) return alert("Selecciona un elemento de la lista.");
+            if (isNaN(qty) || qty <= 0) return alert("Ingresa una cantidad válida para extraer.");
+
+            let DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
+            
+            if (DB[id].cantidad < qty) {
+                return alert(`Stock insuficiente. Solo tienes ${DB[id].cantidad} unidades disponibles.`);
+            }
+
+            DB[id].cantidad -= qty; // Resta el stock (puede llegar a 0)
+            localStorage.setItem('DB_PLANTA', JSON.stringify(DB));
+            
+            alert("Extracción registrada correctamente.");
+            document.getElementById('input-extraer-cantidad').value = '';
+            
+            actualizarTabla();
+            actualizarSelectExtraccion();
+        }
+
+        function eliminarElemento(id) {
+            if(confirm(`¿Deseas eliminar permanentemente la fila del elemento ${id}?`)) {
+                let DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
+                delete DB[id];
+                localStorage.setItem('DB_PLANTA', JSON.stringify(DB));
+                
+                document.getElementById('contenedor-etiqueta').style.display = 'none';
+                actualizarTabla();
+                actualizarSelectExtraccion();
+            }
+        }
+
+        function actualizarTabla() {
+            const DB = JSON.parse(localStorage.getItem('DB_PLANTA')) || {};
+            const cuerpo = document.getElementById('tabla-cuerpo');
+            cuerpo.innerHTML = "";
+            
+            Object.keys(DB).forEach(id => {
+                const stock = DB[id].cantidad;
+                const classZero = stock === 0 ? 'stock-zero' : '';
+                
+                // REQUISITO CLAVE: El botón borrar SOLO aparece si el stock es 0
+                const btnAccion = stock === 0 
+                    ? `<button class="btn-delete-row no-print" onclick="eliminarElemento('${id}')">❌ Borrar</button>`
+                    : `<span style="font-size: 11px; color: #64748b;">En uso</span>`;
+
+                cuerpo.innerHTML += `<tr>
+                    <td>${id}</td>
+                    <td><strong>${DB[id].elemento}</strong></td>
+                    <td>${DB[id].largo || '-'}</td>
+                    <td>${DB[id].diametro || '-'}</td>
+                    <td class="${classZero}">${stock}</td>
+                    <td style="font-size:10px; color:green;">...?id=${id}</td>
+                    <td>${btnAccion}</td>
+                </tr>`;
+            });
+        }
+    </script>
+</body>
+</html>
